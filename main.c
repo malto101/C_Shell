@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <stdbool.h>
 #include "./builtin_cmds/main_cmd.h"
 
 void dsh_loop(void);
@@ -42,6 +43,7 @@ void dsh_loop(void)
 
 #define DSH_RL_BUFSIZE 1024
 
+// Reads a line from input, handling line continuation with backslash at end of line
 char *dsh_read_line(void)
 {
     int bufsize = DSH_RL_BUFSIZE;
@@ -57,24 +59,39 @@ char *dsh_read_line(void)
     while (1)
     {
         c = getchar();
-        if (c == EOF || c == '\n')
+        if (c == EOF)
         {
             buffer[position] = '\0';
             return buffer;
         }
+        else if (c == '\n')
+        {
+            // Check for line continuation: if line ends with '\', remove it and continue reading
+            if (position > 0 && buffer[position - 1] == '\\')
+            {
+                // Remove the backslash for line continuation
+                position--;
+                // Continue reading the next line
+            }
+            else
+            {
+                buffer[position] = '\0';
+                return buffer;
+            }
+        }
         else {
             buffer[position] = c;
-        }
-        position++;
+            position++;
 
-        if (position > bufsize)
-        {
-            bufsize += DSH_RL_BUFSIZE;
-            buffer = realloc(buffer, bufsize);
-            if (!buffer)
+            if (position >= bufsize)
             {
-                fprintf(stderr, "dsh: allocation error\n");
-                exit(EXIT_FAILURE);
+                bufsize += DSH_RL_BUFSIZE;
+                buffer = realloc(buffer, bufsize);
+                if (!buffer)
+                {
+                    fprintf(stderr, "dsh: allocation error\n");
+                    exit(EXIT_FAILURE);
+                }
             }
         }
     }
@@ -84,48 +101,86 @@ char *dsh_read_line(void)
 #define DSH_TOK_BUFSIZE 64
 #define DSH_TOK_DELIM " \t\r\n\a"
 
+// Splits the line into tokens, supporting double quotes for grouping arguments.
+// Backslash escaping removed; backslash is now used for line continuation in input reading.
 char **dsh_split_line(char *line)
 {
     int bufsize = DSH_TOK_BUFSIZE;
     int position = 0;
     char **tokens = malloc(bufsize * sizeof(char*));
-    char *token;
+    char *token = NULL;
+    int token_size = 0;
+    int token_capacity = 64;
+    // Flag to track if we are inside double quotes
+    bool in_quotes = false;
+    int i = 0;
 
-    if(!tokens)
-    {
+    if (!tokens) {
         fprintf(stderr, "dsh: allocation error\n");
         exit(EXIT_FAILURE);
     }
 
-    token = strtok(line, DSH_TOK_DELIM);
-    while(token != NULL)
-    {
-        tokens[position] = token;
-        position++;
-
-        if (position >= bufsize)
-        {
-            bufsize += DSH_TOK_BUFSIZE;
-            tokens = realloc(tokens, bufsize * sizeof(char*));
-            if(!tokens)
-            {
-                fprintf(stderr,"dsh: allocation error");
-                exit(EXIT_FAILURE);
-            }
-        }
-        /*
-         * Continues tokenizing the input string using strtok with NULL as the first argument,
-         * which resumes parsing from where the previous call left off. This line is added to
-         * extract the next token from the command line input, allowing the shell to parse
-         * multiple arguments or commands separated by the delimiter DSH_TOK_DELIM (likely
-         * whitespace or similar). This is essential for breaking down user input into
-         * individual components for further processing in the shell implementation.
-         */
-        token = strtok(NULL, DSH_TOK_DELIM);
-
+    token = malloc(token_capacity * sizeof(char));
+    if (!token) {
+        fprintf(stderr, "dsh: allocation error\n");
+        exit(EXIT_FAILURE);
     }
 
-    tokens[position] =NULL;
+    while (line[i] != '\0') {
+        char current_char = line[i];
+
+        if (current_char == '"') {
+            // Toggle quote state: entering or exiting quoted string
+            in_quotes = !in_quotes;
+        } else if ((current_char == ' ' || current_char == '\t' || current_char == '\r' || current_char == '\n' || current_char == '\a') && !in_quotes) {
+            // End of token if not in quotes (spaces separate arguments)
+            if (token_size > 0) {
+                token[token_size] = '\0';
+                tokens[position++] = token;
+
+                if (position >= bufsize) {
+                    bufsize += DSH_TOK_BUFSIZE;
+                    tokens = realloc(tokens, bufsize * sizeof(char*));
+                    if (!tokens) {
+                        fprintf(stderr, "dsh: allocation error\n");
+                        exit(EXIT_FAILURE);
+                    }
+                }
+
+                // Start new token
+                token_capacity = 64;
+                token = malloc(token_capacity * sizeof(char));
+                if (!token) {
+                    fprintf(stderr, "dsh: allocation error\n");
+                    exit(EXIT_FAILURE);
+                }
+                token_size = 0;
+            }
+        } else {
+            // Add character to current token
+            if (token_size >= token_capacity - 1) {
+                token_capacity *= 2;
+                token = realloc(token, token_capacity * sizeof(char));
+                if (!token) {
+                    fprintf(stderr, "dsh: allocation error\n");
+                    exit(EXIT_FAILURE);
+                }
+            }
+            token[token_size++] = current_char;
+        }
+
+        i++;
+    }
+
+    // Add final token if any
+    if (token_size > 0) {
+        token[token_size] = '\0';
+        tokens[position++] = token;
+    } else {
+        free(token);
+    }
+
+    tokens[position] = NULL;
     return tokens;
 }
 

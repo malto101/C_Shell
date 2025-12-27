@@ -43,7 +43,8 @@ there are many variants of **exec()**, but they all do the same thing: load a bi
 
 To-Do
 
-1. add support for double quotes and back slash escaping in the cmd line parser.
-2. add support for cursor movement
-3. add support for history
-4. add support for auto complete
+1. add support for double quotes and back slash escaping in the cmd line parser.(completed)
+2. add support for new line
+3. add support for cursor movement
+4. add support for history
+5. add support for auto complete
