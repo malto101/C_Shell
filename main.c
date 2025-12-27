@@ -3,8 +3,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <termios.h>
 #include <stdbool.h>
 #include "./builtin_cmds/main_cmd.h"
+#include "./main.h"
+
 
 void dsh_loop(void);
 char *dsh_read_line(void);
@@ -41,14 +44,16 @@ void dsh_loop(void)
     } while (status);
 }
 
-#define DSH_RL_BUFSIZE 1024
 
 // Reads a line from input, handling line continuation with backslash at end of line
 char *dsh_read_line(void)
 {
-    int bufsize = DSH_RL_BUFSIZE;
+    static struct termios orig_termios;
+    struct termios raw;
+    int bufsize = INITIAL_BUFFER_SIZE;
     int position = 0;
-    char *buffer = malloc(sizeof(char)* bufsize);
+    int cursor = 0;
+    char *buffer = malloc(bufsize * sizeof(char));
     int c;
 
     if (!buffer)
@@ -56,36 +61,59 @@ char *dsh_read_line(void)
         fprintf(stderr, "dsh: allocation error\n");
         exit(EXIT_FAILURE);
     }
+
+    memset(buffer, 0, bufsize);
+
+    tcgetattr(STDIN_FILENO, &orig_termios);
+    raw = orig_termios;
+    raw.c_lflag &= ~(ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+    setbuf(stdout, NULL);
+
     while (1)
     {
-        c = getchar();
-        if (c == EOF)
-        {
-            buffer[position] = '\0';
-            return buffer;
-        }
-        else if (c == '\n')
-        {
-            // Check for line continuation: if line ends with '\', remove it and continue reading
-            if (position > 0 && buffer[position - 1] == '\\')
-            {
-                // Remove the backslash for line continuation
-                position--;
-                // Continue reading the next line
-            }
-            else
-            {
-                buffer[position] = '\0';
-                return buffer;
-            }
-        }
-        else {
-            buffer[position] = c;
-            position++;
+        read(STDIN_FILENO, &c, 1);
 
-            if (position >= bufsize)
-            {
-                bufsize += DSH_RL_BUFSIZE;
+        if (c == ESCAPE) {
+            read(STDIN_FILENO, &c, 1);
+            if (c == '[') {
+                read(STDIN_FILENO, &c, 1);
+                if (c == 'C') { // right arrow
+                    if (cursor < position) {
+                        cursor++;
+                        printf(CURSOR_RIGHT);
+                    }
+                } else if (c == 'D') { // left arrow
+                    if (cursor > 0) {
+                        cursor--;
+                        printf(CURSOR_LEFT);
+                    }
+                }
+            }
+        } else if (c == BACKSPACE) {
+            if (cursor > 0) {
+                memmove(&buffer[cursor-1], &buffer[cursor], position - cursor);
+                position--;
+                cursor--;
+                buffer[position] = '\0';
+                printf(CARRIAGE_RETURN CLEAR_ENTIRE_LINE "╰-> %s", buffer);
+                printf("\x1b[%dD" CURSOR_RIGHT_ONE, position - cursor);
+            }
+        } else if (c == ENTER_CR || c == ENTER_LF) {
+            if (position > 0 && buffer[position - 1] == '\\') {
+                position--;
+                cursor--;
+                buffer[position] = '\0';
+                printf(CARRIAGE_RETURN CLEAR_ENTIRE_LINE "╰-> %s", buffer);
+                printf("\x1b[%dD" CURSOR_RIGHT_ONE, position - cursor);
+            } else {
+                buffer[position] = '\0';
+                printf("\n");
+                break;
+            }
+        } else if (c >= PRINTABLE_MIN && c <= PRINTABLE_MAX) {
+            if (position + 1 >= bufsize) {
+                bufsize += BUFFER_INCREMENT;
                 buffer = realloc(buffer, bufsize);
                 if (!buffer)
                 {
@@ -93,24 +121,37 @@ char *dsh_read_line(void)
                     exit(EXIT_FAILURE);
                 }
             }
+            memmove(&buffer[cursor+1], &buffer[cursor], position - cursor);
+            buffer[cursor] = c;
+            position++;
+            cursor++;
+            buffer[position] = '\0';
+            printf("%c", c);
+            if (cursor < position) {
+                printf(CLEAR_FROM_CURSOR);
+                printf("%s", &buffer[cursor]);
+                printf("\x1b[%dD", position - cursor);
+            }
         }
     }
+
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
+    return buffer;
 }
 
 
-#define DSH_TOK_BUFSIZE 64
 #define DSH_TOK_DELIM " \t\r\n\a"
 
 // Splits the line into tokens, supporting double quotes for grouping arguments.
 // Backslash escaping removed; backslash is now used for line continuation in input reading.
 char **dsh_split_line(char *line)
 {
-    int bufsize = DSH_TOK_BUFSIZE;
+    int bufsize = INITIAL_BUFFER_SIZE;
     int position = 0;
     char **tokens = malloc(bufsize * sizeof(char*));
     char *token = NULL;
     int token_size = 0;
-    int token_capacity = 64;
+    int token_capacity = INITIAL_TOKEN_SIZE;
     // Flag to track if we are inside double quotes
     bool in_quotes = false;
     int i = 0;
@@ -139,7 +180,7 @@ char **dsh_split_line(char *line)
                 tokens[position++] = token;
 
                 if (position >= bufsize) {
-                    bufsize += DSH_TOK_BUFSIZE;
+                    bufsize += BUFFER_INCREMENT;
                     tokens = realloc(tokens, bufsize * sizeof(char*));
                     if (!tokens) {
                         fprintf(stderr, "dsh: allocation error\n");
@@ -148,7 +189,7 @@ char **dsh_split_line(char *line)
                 }
 
                 // Start new token
-                token_capacity = 64;
+                token_capacity = INITIAL_TOKEN_SIZE;
                 token = malloc(token_capacity * sizeof(char));
                 if (!token) {
                     fprintf(stderr, "dsh: allocation error\n");
@@ -159,7 +200,7 @@ char **dsh_split_line(char *line)
         } else {
             // Add character to current token
             if (token_size >= token_capacity - 1) {
-                token_capacity *= 2;
+                token_capacity *= TOKEN_INCREMENT;
                 token = realloc(token, token_capacity * sizeof(char));
                 if (!token) {
                     fprintf(stderr, "dsh: allocation error\n");
