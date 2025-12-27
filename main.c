@@ -49,6 +49,9 @@ void dsh_loop(void)
 char *dsh_read_line(void)
 {
     static struct termios orig_termios;
+    static char *history[100];
+    static int history_count = 0;
+    static int history_index = -1;
     struct termios raw;
     int bufsize = INITIAL_BUFFER_SIZE;
     int position = 0;
@@ -88,6 +91,46 @@ char *dsh_read_line(void)
                         cursor--;
                         printf(CURSOR_LEFT);
                     }
+                } else if (c == 'A') { // up arrow
+                    if (history_count > 0) {
+                        if (history_index == -1) {
+                            history_index = history_count - 1;
+                        } else if (history_index > 0) {
+                            history_index--;
+                        }
+                        memset(buffer, 0, bufsize);
+                        int len = strlen(history[history_index]);
+                        if (len >= bufsize) {
+                            bufsize = len + 1;
+                            buffer = realloc(buffer, bufsize);
+                        }
+                        strcpy(buffer, history[history_index]);
+                        position = len;
+                        cursor = position;
+                        printf(CARRIAGE_RETURN CLEAR_ENTIRE_LINE "╰-> %s", buffer);
+                    }
+                } else if (c == 'B') { // down arrow
+                    if (history_index >= 0) {
+                        if (history_index < history_count - 1) {
+                            history_index++;
+                            memset(buffer, 0, bufsize);
+                            int len = strlen(history[history_index]);
+                            if (len >= bufsize) {
+                                bufsize = len + 1;
+                                buffer = realloc(buffer, bufsize);
+                            }
+                            strcpy(buffer, history[history_index]);
+                            position = len;
+                            cursor = position;
+                            printf(CARRIAGE_RETURN CLEAR_ENTIRE_LINE "╰-> %s", buffer);
+                        } else {
+                            history_index = -1;
+                            memset(buffer, 0, bufsize);
+                            position = 0;
+                            cursor = 0;
+                            printf(CARRIAGE_RETURN CLEAR_ENTIRE_LINE "╰-> ");
+                        }
+                    }
                 }
             }
         } else if (c == BACKSPACE) {
@@ -109,6 +152,17 @@ char *dsh_read_line(void)
             } else {
                 buffer[position] = '\0';
                 printf("\n");
+                if (position > 0) {
+                    if (history_count < 100) {
+                        history[history_count] = strdup(buffer);
+                        history_count++;
+                    } else {
+                        free(history[0]);
+                        memmove(history, history + 1, sizeof(char*) * 99);
+                        history[99] = strdup(buffer);
+                    }
+                    history_index = -1;
+                }
                 break;
             }
         } else if (c >= PRINTABLE_MIN && c <= PRINTABLE_MAX) {

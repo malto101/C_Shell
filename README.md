@@ -46,5 +46,5 @@ To-Do
 1. add support for double quotes and back slash escaping in the cmd line parser.(completed)
 2. add support for new line(completed)
 3. add support for cursor movement(completed)
-4. add support for history
+4. add support for history(completed)
 5. add support for auto complete
