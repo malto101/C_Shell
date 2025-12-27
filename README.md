@@ -1,5 +1,7 @@
 # Basic Lifeline of a Shell
 
+NOTE: this is inspired from [Writing a Simple Shell in C](https://brennan.io/2015/01/16/write-a-shell-in-c/)
+
 a shell does 3 things.
 
 - initialize: read and execute its configuration files.
